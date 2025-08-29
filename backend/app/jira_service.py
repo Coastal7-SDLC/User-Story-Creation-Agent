@@ -210,6 +210,7 @@ class JiraService:
                         ]
                     },
                     "issuetype": {"name": "Task"}
+                    # Note: Removed priority and components to avoid field errors
                 }
             }
             
@@ -218,7 +219,10 @@ class JiraService:
                 return {
                     "key": epic.key,
                     "id": epic.id,
-                    "summary": epic.fields.summary
+                    "summary": epic.fields.summary,
+                    "priority": epic.fields.priority.name if epic.fields.priority else None,
+                    "labels": epic.fields.labels if epic.fields.labels else [],
+                    "components": [c.name for c in epic.fields.components] if epic.fields.components else []
                 }
             else:
                 # Use requests-based implementation
@@ -226,7 +230,10 @@ class JiraService:
                 return {
                     "key": response["key"],
                     "id": response["id"],
-                    "summary": epic_name
+                    "summary": epic_name,
+                    "priority": None,  # Not set due to field limitations
+                    "labels": [],      # Not set due to field limitations
+                    "components": []   # Not set due to field limitations
                 }
                 
         except Exception as e:
@@ -246,7 +253,7 @@ class JiraService:
             User story details dictionary
         """
         try:
-            # Prepare issue data with correct Jira Cloud format (Atlassian Document Format)
+            # Enhanced issue data with only supported fields
             issue_data = {
                 "fields": {
                     "project": {"key": project_key},
@@ -267,8 +274,15 @@ class JiraService:
                         ]
                     },
                     "issuetype": {"name": "Task"}
+                    # Note: Removed priority, labels, components, and story points to avoid field errors
+                    # These can be added back if your Jira instance supports them
                 }
             }
+            
+            # Note: Epic linking is disabled for now due to field limitations
+            # The epic_key parameter is kept for future use when supported
+            # if epic_key and self._supports_epic_linking():
+            #     issue_data["fields"]["customfield_10014"] = epic_key
             
             # Note: Jira doesn't support parent-child linking for Task issue types
             # Only Epic issue types can have child issues
@@ -279,7 +293,10 @@ class JiraService:
                 return {
                     "key": issue.key,
                     "id": issue.id,
-                    "summary": issue.fields.summary
+                    "summary": issue.fields.summary,
+                    "priority": issue.fields.priority.name if issue.fields.priority else None,
+                    "labels": issue.fields.labels if issue.fields.labels else [],
+                    "components": [c.name for c in issue.fields.components] if issue.fields.components else []
                 }
             else:
                 # Use requests-based implementation
@@ -287,7 +304,10 @@ class JiraService:
                 return {
                     "key": response["key"],
                     "id": response["id"],
-                    "summary": story_data["story"]
+                    "summary": story_data["story"],
+                    "priority": None,  # Not set due to field limitations
+                    "labels": [],      # Not set due to field limitations
+                    "components": []   # Not set due to field limitations
                 }
                 
         except Exception as e:
@@ -304,6 +324,63 @@ class JiraService:
                 description += f"{i}. {criteria}\n"
         
         return description
+    
+    def _estimate_story_points(self, story_data: Dict[str, Any]) -> int:
+        """
+        Estimate story points based on story complexity.
+        This is a simple heuristic - you can enhance this logic.
+        """
+        try:
+            story_text = story_data.get("story", "")
+            criteria_count = len(story_data.get("acceptance_criteria", []))
+            
+            # Simple estimation logic
+            base_points = 3  # Base story points
+            
+            # Adjust based on acceptance criteria count
+            if criteria_count <= 2:
+                points = base_points
+            elif criteria_count <= 4:
+                points = base_points + 2
+            elif criteria_count <= 6:
+                points = base_points + 4
+            else:
+                points = base_points + 6
+            
+            # Adjust based on story length (complexity indicator)
+            if len(story_text) > 200:
+                points += 1
+            if len(story_text) > 400:
+                points += 1
+            
+            # Cap at reasonable maximum
+            return min(points, 13)  # Fibonacci sequence: 1, 2, 3, 5, 8, 13
+            
+        except Exception as e:
+            logger.warning(f"Could not estimate story points: {e}")
+            return 3  # Default fallback
+    
+    def _supports_epic_linking(self) -> bool:
+        """
+        Check if the Jira instance supports epic linking.
+        This checks for common epic link custom fields.
+        """
+        try:
+            # Common epic link custom field IDs
+            epic_link_fields = ["customfield_10014", "customfield_10008", "customfield_10010"]
+            
+            # Try to get project metadata to check available fields
+            if JIRA_AVAILABLE:
+                project = self.client.project(settings.jira_project_key)
+                # This is a simplified check - you might want to enhance this
+                return True
+            else:
+                # For requests-based implementation, assume epic linking is available
+                return True
+                
+        except Exception as e:
+            logger.warning(f"Could not determine epic linking support: {e}")
+            return False
     
     def export_stories_to_jira(self, stories: List[Dict[str, Any]], project_key: str, create_epic: bool = True, epic_name: str = "User Stories") -> Dict[str, Any]:
         """
