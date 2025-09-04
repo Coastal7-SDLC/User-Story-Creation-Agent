@@ -59,7 +59,7 @@ const UserStoryForm = ({ onGenerateStories, hasStories = false, showTips = false
     }
   };
 
-  // PDF parsing function with better error handling
+  // PDF parsing function with better error handling and fallbacks
   const parsePDF = async (file) => {
     try {
       // Try to import pdfjs-dist
@@ -71,37 +71,96 @@ const UserStoryForm = ({ onGenerateStories, hasStories = false, showTips = false
         throw new Error('PDF parsing library not available. Please convert your PDF to text format.');
       }
 
-      // Set worker path
+      // Set worker path with fallback
       if (pdfjsLib.GlobalWorkerOptions) {
         pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
       }
       
       const arrayBuffer = await file.arrayBuffer();
-      const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+      
+      // Try different PDF parsing options
+      const loadingTask = pdfjsLib.getDocument({
+        data: arrayBuffer,
+        // Add options for better text extraction
+        verbosity: 0, // Reduce console output
+        disableAutoFetch: false,
+        disableStream: false,
+        // Try to handle image-based PDFs
+        cMapUrl: `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/cmaps/`,
+        cMapPacked: true,
+      });
+      
+      const pdf = await loadingTask.promise;
       
       let fullText = '';
+      let pagesWithText = 0;
       
-      // Extract text from all pages
+      // Extract text from all pages with better error handling
       for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
         try {
           const page = await pdf.getPage(pageNum);
-          const textContent = await page.getTextContent();
-          const pageText = textContent.items.map(item => item.str).join(' ');
-          fullText += pageText + '\n';
+          
+          // Try multiple text extraction methods
+          let pageText = '';
+          
+          // Method 1: Standard text content extraction
+          try {
+            const textContent = await page.getTextContent();
+            pageText = textContent.items
+              .filter(item => item.str && item.str.trim())
+              .map(item => item.str.trim())
+              .join(' ');
+          } catch (textError) {
+            console.warn(`Standard text extraction failed for page ${pageNum}:`, textError);
+          }
+          
+          // Method 2: Try to get text from text layer if available
+          if (!pageText.trim()) {
+            try {
+              const textLayer = await page.getTextContent({ normalizeWhitespace: true });
+              pageText = textLayer.items
+                .filter(item => item.str && item.str.trim())
+                .map(item => item.str.trim())
+                .join(' ');
+            } catch (layerError) {
+              console.warn(`Text layer extraction failed for page ${pageNum}:`, layerError);
+            }
+          }
+          
+          if (pageText.trim()) {
+            fullText += pageText + '\n';
+            pagesWithText++;
+          } else {
+            console.warn(`No text found on page ${pageNum} - might be image-based`);
+          }
         } catch (pageError) {
-          console.warn(`Error extracting text from page ${pageNum}:`, pageError);
+          console.warn(`Error processing page ${pageNum}:`, pageError);
           // Continue with other pages
         }
       }
       
+      // Check if we got any text
       if (!fullText.trim()) {
-        throw new Error('No text could be extracted from the PDF. The file might be image-based or corrupted.');
+        throw new Error('No text could be extracted from the PDF. This appears to be an image-based PDF. Please try:\n1. Converting the PDF to text using OCR tools\n2. Copying the text manually\n3. Using a different file format (TXT, DOC, DOCX)');
+      }
+      
+      // If we got some text but not from all pages, warn the user
+      if (pagesWithText < pdf.numPages) {
+        console.warn(`Only ${pagesWithText} out of ${pdf.numPages} pages contained extractable text`);
       }
       
       return fullText.trim();
     } catch (error) {
       console.error('Error parsing PDF:', error);
-      throw new Error(`Failed to parse PDF: ${error.message}`);
+      
+      // Provide more helpful error messages
+      if (error.message.includes('Invalid PDF')) {
+        throw new Error('The uploaded file is not a valid PDF or is corrupted. Please try a different file.');
+      } else if (error.message.includes('No text could be extracted')) {
+        throw error; // Re-throw our custom message
+      } else {
+        throw new Error(`Failed to parse PDF: ${error.message}. Please try converting your PDF to text format or use a different file type.`);
+      }
     }
   };
 
@@ -124,8 +183,20 @@ const UserStoryForm = ({ onGenerateStories, hasStories = false, showTips = false
           setUploadedFile(file);
           toast.success(`PDF "${file.name}" processed successfully! Extracted ${pdfText.length} characters.`);
         } catch (error) {
-          toast.error(error.message || 'Failed to process PDF file');
+          // Show more detailed error messages
+          const errorMessage = error.message || 'Failed to process PDF file';
+          toast.error(errorMessage, { duration: 6000 }); // Show error for 6 seconds
           console.error('PDF processing error:', error);
+          
+          // If it's an image-based PDF, show additional help
+          if (errorMessage.includes('image-based')) {
+            setTimeout(() => {
+              toast('💡 Tip: Try converting your PDF to text using online OCR tools or copy the text manually', {
+                duration: 8000,
+                icon: '💡'
+              });
+            }, 2000);
+          }
         } finally {
           setIsPdfProcessing(false);
         }
@@ -218,6 +289,19 @@ const UserStoryForm = ({ onGenerateStories, hasStories = false, showTips = false
                     ×
                   </button>
                 </div>
+              </div>
+            )}
+            
+            {/* PDF Processing Help */}
+            {isPdfProcessing && (
+              <div className="mt-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                <div className="flex items-center space-x-2">
+                  <Loader2 className="w-4 h-4 animate-spin text-blue-600" />
+                  <span className="text-sm text-blue-800 font-medium">Processing PDF...</span>
+                </div>
+                <p className="text-xs text-blue-600 mt-1">
+                  This may take a moment for large files or image-based PDFs
+                </p>
               </div>
             )}
           </div>
