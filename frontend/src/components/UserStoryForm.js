@@ -1,12 +1,14 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useForm } from 'react-hook-form';
-import { Send, Loader2, Upload, FileText } from 'lucide-react';
+import { Send, Loader2, Upload, FileText, BarChart3 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 const UserStoryForm = ({ onGenerateStories, hasStories = false, showTips = false }) => {
   const [isLoading, setIsLoading] = useState(false);
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [uploadedFile, setUploadedFile] = useState(null);
   const [isPdfProcessing, setIsPdfProcessing] = useState(false);
+  const [analysisResult, setAnalysisResult] = useState(null);
   const {
     register,
     handleSubmit,
@@ -17,6 +19,45 @@ const UserStoryForm = ({ onGenerateStories, hasStories = false, showTips = false
   } = useForm();
 
   const requirements = watch('requirements');
+
+  // Clear analysis when requirements change
+  useEffect(() => {
+    if (analysisResult) {
+      setAnalysisResult(null);
+    }
+  }, [requirements]);
+
+  // Analyze requirements to estimate story count
+  const analyzeRequirements = async () => {
+    if (!requirements || requirements.length < 10) {
+      toast.error('Please enter requirements (at least 10 characters) to analyze');
+      return;
+    }
+
+    setIsAnalyzing(true);
+    try {
+      const response = await fetch('/api/analyze-requirements', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ requirements }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to analyze requirements');
+      }
+
+      const result = await response.json();
+      setAnalysisResult(result);
+      toast.success(`Analysis complete! Estimated ${result.story_estimation.estimated_min_stories}-${result.story_estimation.estimated_max_stories} stories`);
+    } catch (error) {
+      toast.error(error.message || 'Failed to analyze requirements');
+      console.error('Analysis error:', error);
+    } finally {
+      setIsAnalyzing(false);
+    }
+  };
 
   // PDF parsing function with better error handling
   const parsePDF = async (file) => {
@@ -204,11 +245,67 @@ const UserStoryForm = ({ onGenerateStories, hasStories = false, showTips = false
               {requirements.length} characters
             </p>
           )}
+
+          {/* Requirements Analysis Section */}
+          {analysisResult && (
+            <div className="mt-4 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+              <div className="flex items-center space-x-2 mb-3">
+                <BarChart3 className="w-5 h-5 text-blue-600" />
+                <h3 className="font-semibold text-blue-900">Requirements Analysis</h3>
+              </div>
+              
+              <div className="grid grid-cols-2 gap-4 text-sm">
+                <div>
+                  <span className="font-medium text-blue-800">Complexity:</span>
+                  <span className="ml-2 text-blue-700">{analysisResult.requirements_analysis.estimated_complexity}</span>
+                </div>
+                <div>
+                  <span className="font-medium text-blue-800">Word Count:</span>
+                  <span className="ml-2 text-blue-700">{analysisResult.requirements_analysis.word_count}</span>
+                </div>
+                <div>
+                  <span className="font-medium text-blue-800">Estimated Stories:</span>
+                  <span className="ml-2 text-blue-700 font-bold">
+                    {analysisResult.story_estimation.estimated_min_stories}-{analysisResult.story_estimation.estimated_max_stories}
+                  </span>
+                </div>
+                <div>
+                  <span className="font-medium text-blue-800">Features Detected:</span>
+                  <span className="ml-2 text-blue-700">{analysisResult.requirements_analysis.feature_indicators}</span>
+                </div>
+              </div>
+              
+              <p className="mt-3 text-sm text-blue-700">
+                {analysisResult.story_estimation.recommended_approach}
+              </p>
+            </div>
+          )}
         </div>
 
         <div className="flex items-center justify-between pt-4">
-          <div className="text-sm text-gray-500 font-medium">
-            {isLoading ? 'Generating user stories...' : 'Click generate to create user stories'}
+          <div className="flex items-center space-x-3">
+            <button
+              type="button"
+              onClick={analyzeRequirements}
+              disabled={!requirements || requirements.length < 10 || isAnalyzing || isLoading}
+              className="btn-secondary flex items-center space-x-2 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {isAnalyzing ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <span>Analyzing...</span>
+                </>
+              ) : (
+                <>
+                  <BarChart3 className="w-4 h-4" />
+                  <span>Analyze Requirements</span>
+                </>
+              )}
+            </button>
+            
+            <div className="text-sm text-gray-500 font-medium">
+              {isLoading ? 'Generating user stories...' : 'Click generate to create user stories'}
+            </div>
           </div>
           
           <button
@@ -226,7 +323,7 @@ const UserStoryForm = ({ onGenerateStories, hasStories = false, showTips = false
                 <Send className="w-5 h-5" />
                 <span>Generate Stories</span>
               </>
-            )}
+              )}
           </button>
         </div>
       </form>

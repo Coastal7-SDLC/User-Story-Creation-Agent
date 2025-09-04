@@ -73,6 +73,14 @@ class OpenRouterService:
             Requirements:
             {requirements}
             
+            Please analyze the requirements and generate an appropriate number of user stories based on the complexity and scope of the project. 
+            - For simple requirements: Generate 2-4 user stories
+            - For medium complexity: Generate 4-6 user stories  
+            - For complex requirements: Generate 6-10 user stories
+            - For very complex projects: Generate 8-15 user stories
+            
+            The number should be proportional to the scope and complexity of the requirements provided.
+            
             Please output ONLY a JSON array of objects. Each object should contain:
             - "story": The user story in format "As a <role>, I want <feature> so that <reason>."
             - "acceptance_criteria": An array of acceptance criteria in "Given... When... Then..." format
@@ -86,18 +94,10 @@ class OpenRouterService:
                         "Given I am on the registration page, When I submit with invalid email format, Then I should see an error message",
                         "Given I am on the registration page, When I submit with weak password, Then I should see password strength requirements"
                     ]
-                }},
-                {{
-                    "story": "As a user, I want to log in so that I can access my account securely.",
-                    "acceptance_criteria": [
-                        "Given I am on the login page, When I enter correct credentials, Then I should be logged in successfully",
-                        "Given I am on the login page, When I enter incorrect credentials, Then I should see an error message",
-                        "Given I am logged in, When I visit protected pages, Then I should have access to them"
-                    ]
                 }}
             ]
             
-            Generate 5-8 user stories with 3-4 acceptance criteria each based on the requirements.
+            Generate the appropriate number of user stories based on the complexity of the requirements provided, with 3-4 acceptance criteria each.
             """
             
             logger.info(f"Making API call to OpenRouter with model: {settings.openrouter_model}")
@@ -108,7 +108,7 @@ class OpenRouterService:
                 messages=[
                     {
                         "role": "system", 
-                        "content": "You are a professional software analyst who creates clear, actionable user stories with acceptance criteria for agile development. Always respond with valid JSON arrays containing story and acceptance_criteria fields."
+                        "content": "You are a professional software analyst who creates clear, actionable user stories with acceptance criteria for agile development. You analyze project requirements and determine the appropriate number of user stories based on complexity and scope. For simple projects, generate fewer stories. For complex projects, generate more comprehensive stories. Always respond with valid JSON arrays containing story and acceptance_criteria fields."
                     },
                     {"role": "user", "content": prompt}
                 ],

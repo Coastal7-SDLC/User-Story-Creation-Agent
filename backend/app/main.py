@@ -236,6 +236,118 @@ async def generate_user_stories(request: Request):
         )
 
 
+@app.post("/analyze-requirements")
+async def analyze_requirements(request: Request):
+    """
+    Analyze project requirements and estimate the number of user stories that will be generated.
+    
+    Args:
+        request: FastAPI request object containing JSON data with requirements
+        
+    Returns:
+        JSON response with analysis results and estimated story count
+    """
+    try:
+        # Check if service is available
+        if openrouter_service is None:
+            raise HTTPException(
+                status_code=503, 
+                detail="OpenRouter service is not available. Please check your configuration."
+            )
+        
+        # Parse request body
+        try:
+            body = await request.json()
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=400, detail="Invalid JSON in request body")
+        
+        # Validate request
+        if not body:
+            raise HTTPException(status_code=422, detail="Request body is empty")
+        
+        if "requirements" not in body:
+            raise HTTPException(status_code=422, detail="Missing 'requirements' field")
+        
+        requirements = body["requirements"]
+        if not requirements or not isinstance(requirements, str):
+            raise HTTPException(status_code=422, detail="Requirements must be a non-empty string")
+        
+        if len(requirements.strip()) < 10:
+            raise HTTPException(
+                status_code=422, 
+                detail="Requirements must be at least 10 characters long"
+            )
+        
+        logger.info(f"Analyzing requirements: {requirements[:100]}...")
+        
+        # Analyze requirements complexity
+        word_count = len(requirements.split())
+        sentence_count = len([s for s in requirements.split('.') if s.strip()])
+        
+        # Estimate complexity based on content analysis
+        complexity_score = 0
+        
+        # Simple heuristics for complexity estimation
+        if word_count < 50:
+            complexity_score = 1  # Simple
+        elif word_count < 150:
+            complexity_score = 2  # Medium
+        elif word_count < 300:
+            complexity_score = 3  # Complex
+        else:
+            complexity_score = 4  # Very Complex
+        
+        # Adjust based on technical terms and features mentioned
+        technical_terms = ['api', 'database', 'authentication', 'authorization', 'integration', 'workflow', 'reporting', 'dashboard', 'notification', 'payment', 'search', 'filter', 'export', 'import']
+        feature_count = sum(1 for term in technical_terms if term.lower() in requirements.lower())
+        
+        if feature_count > 5:
+            complexity_score = min(4, complexity_score + 1)
+        elif feature_count > 2:
+            complexity_score = min(4, complexity_score + 0.5)
+        
+        # Estimate story count based on complexity
+        story_estimates = {
+            1: {"min": 2, "max": 4, "complexity": "Simple"},
+            2: {"min": 4, "max": 6, "complexity": "Medium"},
+            3: {"min": 6, "max": 10, "complexity": "Complex"},
+            4: {"min": 8, "max": 15, "complexity": "Very Complex"}
+        }
+        
+        estimate = story_estimates.get(complexity_score, {"min": 4, "max": 8, "complexity": "Medium"})
+        
+        analysis_result = {
+            "requirements_analysis": {
+                "word_count": word_count,
+                "sentence_count": sentence_count,
+                "estimated_complexity": estimate["complexity"],
+                "complexity_score": complexity_score,
+                "feature_indicators": feature_count
+            },
+            "story_estimation": {
+                "estimated_min_stories": estimate["min"],
+                "estimated_max_stories": estimate["max"],
+                "recommended_approach": f"Based on the complexity, expect {estimate['min']}-{estimate['max']} user stories"
+            },
+            "analysis_timestamp": datetime.utcnow().isoformat(),
+            "status": "success"
+        }
+        
+        logger.info(f"Requirements analysis completed: {estimate['complexity']} complexity, {estimate['min']}-{estimate['max']} stories estimated")
+        
+        return JSONResponse(content=analysis_result)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error analyzing requirements: {e}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Internal server error: {str(e)}"
+        )
+
+
 @app.exception_handler(Exception)
 async def global_exception_handler(request, exc):
     """Global exception handler for unhandled exceptions."""
