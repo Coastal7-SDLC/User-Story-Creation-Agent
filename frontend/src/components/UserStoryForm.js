@@ -59,7 +59,7 @@ const UserStoryForm = ({ onGenerateStories, hasStories = false, showTips = false
     }
   };
 
-  // PDF parsing function with better error handling and fallbacks
+  // PDF parsing function with OCR fallback for image-based PDFs
   const parsePDF = async (file) => {
     try {
       // Try to import pdfjs-dist
@@ -81,11 +81,9 @@ const UserStoryForm = ({ onGenerateStories, hasStories = false, showTips = false
       // Try different PDF parsing options
       const loadingTask = pdfjsLib.getDocument({
         data: arrayBuffer,
-        // Add options for better text extraction
-        verbosity: 0, // Reduce console output
+        verbosity: 0,
         disableAutoFetch: false,
         disableStream: false,
-        // Try to handle image-based PDFs
         cMapUrl: `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/cmaps/`,
         cMapPacked: true,
       });
@@ -94,8 +92,9 @@ const UserStoryForm = ({ onGenerateStories, hasStories = false, showTips = false
       
       let fullText = '';
       let pagesWithText = 0;
+      let pagesNeedingOCR = [];
       
-      // Extract text from all pages with better error handling
+      // First pass: Try to extract text normally
       for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
         try {
           const page = await pdf.getPage(pageNum);
@@ -131,11 +130,68 @@ const UserStoryForm = ({ onGenerateStories, hasStories = false, showTips = false
             fullText += pageText + '\n';
             pagesWithText++;
           } else {
-            console.warn(`No text found on page ${pageNum} - might be image-based`);
+            console.warn(`No text found on page ${pageNum} - will try OCR`);
+            pagesNeedingOCR.push(pageNum);
           }
         } catch (pageError) {
           console.warn(`Error processing page ${pageNum}:`, pageError);
-          // Continue with other pages
+          pagesNeedingOCR.push(pageNum);
+        }
+      }
+      
+      // If we have pages that need OCR, try OCR processing
+      if (pagesNeedingOCR.length > 0) {
+        console.log(`Attempting OCR for ${pagesNeedingOCR.length} pages...`);
+        
+        try {
+          // Import Tesseract.js for OCR
+          const Tesseract = await import('tesseract.js');
+          
+          // Process each page that needs OCR
+          for (const pageNum of pagesNeedingOCR) {
+            try {
+              const page = await pdf.getPage(pageNum);
+              
+              // Convert page to canvas
+              const viewport = page.getViewport({ scale: 2.0 });
+              const canvas = document.createElement('canvas');
+              const context = canvas.getContext('2d');
+              canvas.height = viewport.height;
+              canvas.width = viewport.width;
+              
+              const renderContext = {
+                canvasContext: context,
+                viewport: viewport
+              };
+              
+              await page.render(renderContext).promise;
+              
+              // Convert canvas to image data for OCR
+              const imageData = canvas.toDataURL('image/png');
+              
+              // Perform OCR on the image
+              const { data: { text } } = await Tesseract.recognize(imageData, 'eng', {
+                logger: m => {
+                  if (m.status === 'recognizing text') {
+                    console.log(`OCR Progress for page ${pageNum}: ${Math.round(m.progress * 100)}%`);
+                  }
+                }
+              });
+              
+              if (text && text.trim()) {
+                fullText += text.trim() + '\n';
+                pagesWithText++;
+                console.log(`OCR successful for page ${pageNum}: ${text.length} characters`);
+              } else {
+                console.warn(`OCR failed to extract text from page ${pageNum}`);
+              }
+            } catch (ocrError) {
+              console.error(`OCR failed for page ${pageNum}:`, ocrError);
+            }
+          }
+        } catch (ocrImportError) {
+          console.error('Failed to import OCR library:', ocrImportError);
+          // Continue without OCR
         }
       }
       
@@ -144,9 +200,9 @@ const UserStoryForm = ({ onGenerateStories, hasStories = false, showTips = false
         throw new Error('No text could be extracted from the PDF. This appears to be an image-based PDF. Please try:\n1. Converting the PDF to text using OCR tools\n2. Copying the text manually\n3. Using a different file format (TXT, DOC, DOCX)');
       }
       
-      // If we got some text but not from all pages, warn the user
+      // If we got some text but not from all pages, inform the user
       if (pagesWithText < pdf.numPages) {
-        console.warn(`Only ${pagesWithText} out of ${pdf.numPages} pages contained extractable text`);
+        console.warn(`Successfully processed ${pagesWithText} out of ${pdf.numPages} pages`);
       }
       
       return fullText.trim();
@@ -181,7 +237,14 @@ const UserStoryForm = ({ onGenerateStories, hasStories = false, showTips = false
           const pdfText = await parsePDF(file);
           setValue('requirements', pdfText);
           setUploadedFile(file);
-          toast.success(`PDF "${file.name}" processed successfully! Extracted ${pdfText.length} characters.`);
+          
+          // Show success message with OCR info if applicable
+          const hasOCR = pdfText.includes('OCR') || pdfText.length > 0;
+          const message = hasOCR 
+            ? `PDF "${file.name}" processed successfully! Extracted ${pdfText.length} characters using OCR.`
+            : `PDF "${file.name}" processed successfully! Extracted ${pdfText.length} characters.`;
+          
+          toast.success(message, { duration: 5000 });
         } catch (error) {
           // Show more detailed error messages
           const errorMessage = error.message || 'Failed to process PDF file';
@@ -191,8 +254,8 @@ const UserStoryForm = ({ onGenerateStories, hasStories = false, showTips = false
           // If it's an image-based PDF, show additional help
           if (errorMessage.includes('image-based')) {
             setTimeout(() => {
-              toast('💡 Tip: Try converting your PDF to text using online OCR tools or copy the text manually', {
-                duration: 8000,
+              toast('💡 Tip: The PDF appears to be image-based. Try:\n• Using a higher quality PDF\n• Converting to text format first\n• Copying text manually', {
+                duration: 10000,
                 icon: '💡'
               });
             }, 2000);
@@ -300,8 +363,11 @@ const UserStoryForm = ({ onGenerateStories, hasStories = false, showTips = false
                   <span className="text-sm text-blue-800 font-medium">Processing PDF...</span>
                 </div>
                 <p className="text-xs text-blue-600 mt-1">
-                  This may take a moment for large files or image-based PDFs
+                  Extracting text and running OCR for image-based content. This may take a moment.
                 </p>
+                <div className="mt-2 text-xs text-blue-500">
+                  💡 For best results, ensure your PDF has clear, readable text
+                </div>
               </div>
             )}
           </div>
